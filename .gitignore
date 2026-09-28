@@ -1,0 +1,102 @@
+# ==========================================
+# NEXUS — Git Ignore
+# ==========================================
+
+# --------------------
+# Operating System
+# --------------------
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# macOS
+.DS_Store
+
+# --------------------
+# Visual Studio Code
+# --------------------
+
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# --------------------
+# .NET / ASP.NET Core
+# --------------------
+
+**/bin/
+**/obj/
+
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# NuGet
+packages/
+*.nupkg
+*.snupkg
+
+# --------------------
+# Node.js
+# --------------------
+
+**/node_modules/
+
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# --------------------
+# Environment / Secrets
+# --------------------
+
+.env
+.env.*
+!.env.example
+
+# Certificates / Keys
+*.pfx
+*.p12
+*.pem
+*.key
+
+# --------------------
+# Logs
+# --------------------
+
+*.log
+logs/
+
+# --------------------
+# Docker
+# --------------------
+
+docker-data/
+docker-volumes/
+
+# --------------------
+# Local Databases
+# --------------------
+
+*.db
+*.db-shm
+*.db-wal
+
+# --------------------
+# Test / Coverage
+# --------------------
+
+coverage/
+TestResults/
+
+# --------------------
+# Temporary Files
+# --------------------
+
+*.tmp
+*.temp
+*.bak
