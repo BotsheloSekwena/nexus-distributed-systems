@@ -100,3 +100,5 @@ TestResults/
 *.tmp
 *.temp
 *.bak
+# PostgreSQL local backup
+nexus-postgres-backup.sql
