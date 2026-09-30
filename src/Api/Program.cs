@@ -1,15 +1,15 @@
-using Api.Data;
+﻿using Api.Data;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
+var connectionString = builder.Configuration.GetConnectionString("NexusDatabase");
+
 builder.Services.AddOpenApi();
 
 builder.Services.AddDbContext<NexusDbContext>(options =>
-    options.UseNpgsql(
-        builder.Configuration.GetConnectionString("NexusDatabase")));
+    options.UseNpgsql(connectionString));
 
-// Swagger services
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
@@ -19,7 +19,6 @@ if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
 
-    // Swagger UI
     app.UseSwagger();
     app.UseSwaggerUI();
 }
@@ -34,27 +33,33 @@ app.MapGet("/health", () =>
 })
 .WithName("HealthCheck");
 
-// Temporary
 app.MapGet("/health/database", async (NexusDbContext db) =>
 {
-    await db.Database.OpenConnectionAsync();
+    var connection = db.Database.GetDbConnection();
 
     try
     {
-        await using var command = db.Database.GetDbConnection().CreateCommand();
-        command.CommandText = "SELECT current_database()";
-
-        var databaseName = await command.ExecuteScalarAsync();
+        var canConnect = await db.Database.CanConnectAsync();
 
         return Results.Ok(new
         {
-            status = "healthy",
-            database = databaseName
+            status = canConnect ? "healthy" : "unhealthy",
+            database = connection.Database,
+            dataSource = connection.DataSource,
+            canConnect
         });
     }
-    finally
+    catch (Exception ex)
     {
-        await db.Database.CloseConnectionAsync();
+        app.Logger.LogError(
+            ex,
+            "Database health check failed"
+        );
+
+        return Results.Problem(
+            detail: "The database health check failed.",
+            statusCode: 500
+        );
     }
 })
 .WithName("DatabaseHealthCheck");
