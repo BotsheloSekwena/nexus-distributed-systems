@@ -26,14 +26,20 @@
     environment:
       ASPNETCORE_ENVIRONMENT: Development
       ConnectionStrings__NexusDatabase: Host=postgres;Port=5432;Database=nexus;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
-    ports:
-      - "5160:8080"
     depends_on:
       postgres:
         condition: service_healthy
     networks:
       - nexus-app-network
       - nexus-db-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.nexus-api.rule=PathPrefix(`/api`)"
+      - "traefik.http.routers.nexus-api.entrypoints=web"
+      - "traefik.http.routers.nexus-api.priority=100"
+      - "traefik.http.middlewares.nexus-api-strip.stripprefix.prefixes=/api"
+      - "traefik.http.routers.nexus-api.middlewares=nexus-api-strip"
+      - "traefik.http.services.nexus-api.loadbalancer.server.port=8080"
 
   auth:
     build:
@@ -48,14 +54,40 @@
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       JWT_SECRET: ${JWT_SECRET}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN}
-    ports:
-      - "3000:3000"
     depends_on:
       postgres:
         condition: service_healthy
     networks:
       - nexus-app-network
       - nexus-db-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.nexus-auth-health.rule=Path(`/auth/health`) || Path(`/auth/health/database`)"
+      - "traefik.http.routers.nexus-auth-health.entrypoints=web"
+      - "traefik.http.routers.nexus-auth-health.priority=200"
+      - "traefik.http.middlewares.nexus-auth-health-strip.stripprefix.prefixes=/auth"
+      - "traefik.http.routers.nexus-auth-health.middlewares=nexus-auth-health-strip"
+      - "traefik.http.routers.nexus-auth.rule=PathPrefix(`/auth`)"
+      - "traefik.http.routers.nexus-auth.entrypoints=web"
+      - "traefik.http.routers.nexus-auth.priority=100"
+      - "traefik.http.services.nexus-auth.loadbalancer.server.port=3000"
+
+  traefik:
+    image: traefik:v3.6.1
+    container_name: nexus-traefik
+    command:
+      - "--api.dashboard=true"
+      - "--api.insecure=false"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--providers.docker.network=nexus-app-network"
+      - "--entrypoints.web.address=:80"
+    ports:
+      - "8080:80"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - nexus-app-network
 
 networks:
   nexus-app-network:
