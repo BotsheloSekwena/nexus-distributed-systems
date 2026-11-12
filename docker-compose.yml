@@ -26,6 +26,11 @@
     environment:
       ASPNETCORE_ENVIRONMENT: Development
       ConnectionStrings__NexusDatabase: Host=postgres;Port=5432;Database=nexus;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+      Jwt__Secret: ${JWT_SECRET}
+      Jwt__Issuer: ${JWT_ISSUER}
+      Jwt__Audience: ${JWT_AUDIENCE}
+      Auth__ValidationUrl: http://auth:3000/internal/tokens/validate
+      Auth__InternalApiKey: ${AUTH_INTERNAL_API_KEY}
     depends_on:
       postgres:
         condition: service_healthy
@@ -52,8 +57,11 @@
       POSTGRES_DB: nexus_auth
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      JWT_ISSUER: ${JWT_ISSUER}
+      JWT_AUDIENCE: ${JWT_AUDIENCE}
       JWT_SECRET: ${JWT_SECRET}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN}
+      AUTH_INTERNAL_API_KEY: ${AUTH_INTERNAL_API_KEY}
     depends_on:
       postgres:
         condition: service_healthy

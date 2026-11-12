@@ -1,21 +1,30 @@
+
 const bcrypt = require("bcrypt");
+const crypto = require("crypto");
 const userRepository = require("../repositories/userRepository");
 
-async function registerUser({
-    username,
-    email,
-    password,
-    role = "User"
-}) {
+// Generate a random dummy hash for unknown and inactive accounts.
+const dummyPasswordHashPromise = bcrypt.hash(
+    crypto.randomBytes(32).toString("hex"),
+    12
+);
+
+/**
+ * Registers a new standard user.
+ */
+async function registerUser({ username, email, password }) {
+    const normalizedUsername = username.trim();
+    const normalizedEmail = email.trim().toLowerCase();
+
     const existingUsername =
-        await userRepository.getUserByUsername(username);
+        await userRepository.getUserByUsername(normalizedUsername);
 
     if (existingUsername) {
         throw new Error("Username already exists");
     }
 
     const existingEmail =
-        await userRepository.getUserByEmail(email);
+        await userRepository.getUserByEmail(normalizedEmail);
 
     if (existingEmail) {
         throw new Error("Email already exists");
@@ -24,27 +33,32 @@ async function registerUser({
     const passwordHash = await bcrypt.hash(password, 12);
 
     return userRepository.createUser({
-        username,
-        email,
+        username: normalizedUsername,
+        email: normalizedEmail,
         passwordHash,
-        role
+        role: "User"
     });
 }
 
+/**
+ * Authenticates a user and returns their current token version.
+ */
 async function authenticateUser(username, password) {
+    const normalizedUsername = username.trim();
+
     const user =
-        await userRepository.getUserByUsername(username);
+        await userRepository.getUserByUsername(normalizedUsername);
 
-    if (!user) {
+    if (!user || !user.is_active) {
+        const dummyHash = await dummyPasswordHashPromise;
+        await bcrypt.compare(password, dummyHash);
         return null;
     }
 
-    if (!user.is_active) {
-        return null;
-    }
-
-    const passwordMatches =
-        await bcrypt.compare(password, user.password_hash);
+    const passwordMatches = await bcrypt.compare(
+        password,
+        user.password_hash
+    );
 
     if (!passwordMatches) {
         return null;
@@ -56,11 +70,24 @@ async function authenticateUser(username, password) {
         email: user.email,
         role: user.role,
         isActive: user.is_active,
+        tokenVersion: user.token_version,
         createdAt: user.created_at
     };
 }
 
+/**
+ * Validates a JWT against the current database account state.
+ */
+async function validateToken({ userId, tokenVersion, role }) {
+    return userRepository.isTokenValid(
+        userId,
+        tokenVersion,
+        role
+    );
+}
+
 module.exports = {
     registerUser,
-    authenticateUser
+    authenticateUser,
+    validateToken
 };
