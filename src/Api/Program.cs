@@ -1,9 +1,12 @@
-﻿
-using System.Net;
+﻿using System.Net;
 using System.Net.Http.Json;
 using System.Security.Claims;
 using System.Text;
 using Api.Data;
+using Api.Configuration;
+using Api.Services;
+using Contracts;
+using Api.Models;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -171,6 +174,20 @@ builder.Services.AddAuthorization();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
+builder.Services
+    .AddOptions<RabbitMqOptions>()
+    .Bind(builder.Configuration.GetSection(RabbitMqOptions.SectionName))
+    .Validate(options =>
+        !string.IsNullOrWhiteSpace(options.Host) &&
+        options.Port > 0 &&
+        !string.IsNullOrWhiteSpace(options.User) &&
+        !string.IsNullOrWhiteSpace(options.Password) &&
+        !string.IsNullOrWhiteSpace(options.Exchange),
+        "RabbitMQ configuration is incomplete.")
+    .ValidateOnStart();
+
+builder.Services.AddSingleton<ITelemetryPublisher, RabbitMqTelemetryPublisher>();
+
 var app = builder.Build();
 
 // Configure development API documentation.
@@ -223,6 +240,84 @@ app.MapGet("/health/database", async (NexusDbContext db) =>
     }
 })
 .WithName("DatabaseHealthCheck");
+
+app.MapPost("/telemetry", async (
+    TelemetryRequest request,
+    ITelemetryPublisher publisher,
+    ILogger<Program> logger,
+    CancellationToken cancellationToken) =>
+{
+    if (!Enum.TryParse<TelemetryCategory>(
+            request.Category,
+            ignoreCase: true,
+            out var category) ||
+        !Enum.IsDefined(category))
+    {
+        return Results.BadRequest(new
+        {
+            error = "Category must be Infrastructure or Sensor."
+        });
+    }
+
+    if (string.IsNullOrWhiteSpace(request.Source) ||
+        request.Source.Length > 150 ||
+        string.IsNullOrWhiteSpace(request.Metric) ||
+        request.Metric.Length > 100 ||
+        string.IsNullOrWhiteSpace(request.Unit) ||
+        request.Unit.Length > 32 ||
+        !double.IsFinite(request.Value) ||
+        request.Dimensions.Count > 20 ||
+        request.Dimensions.Any(dimension =>
+            string.IsNullOrWhiteSpace(dimension.Key) ||
+            dimension.Key.Length > 100 ||
+            dimension.Value.Length > 250))
+    {
+        return Results.BadRequest(new
+        {
+            error = "The telemetry payload contains invalid values."
+        });
+    }
+
+    var telemetryEvent = new TelemetryEvent
+    {
+        Category = category,
+        Source = request.Source,
+        Data = new TelemetryMeasurement
+        {
+            Metric = request.Metric,
+            Value = request.Value,
+            Unit = request.Unit,
+            Dimensions = request.Dimensions
+        }
+    };
+
+    try
+    {
+        await publisher.PublishAsync(
+            telemetryEvent,
+            cancellationToken);
+
+        return Results.Accepted(
+            $"/telemetry/{telemetryEvent.EventId}",
+            new
+            {
+                eventId = telemetryEvent.EventId,
+                status = "accepted"
+            });
+    }
+    catch (Exception exception)
+    {
+        logger.LogError(
+            exception,
+            "Unable to publish telemetry event {EventId}",
+            telemetryEvent.EventId);
+
+        return Results.Problem(
+            title: "Telemetry publishing failed.",
+            statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+})
+.RequireAuthorization();
 
 // Protected endpoint for JWT authentication verification.
 app.MapGet("/secure", (ClaimsPrincipal user) =>

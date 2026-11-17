@@ -31,6 +31,11 @@
       Jwt__Audience: ${JWT_AUDIENCE}
       Auth__ValidationUrl: http://auth:3000/internal/tokens/validate
       Auth__InternalApiKey: ${AUTH_INTERNAL_API_KEY}
+      RabbitMQ__Host: rabbitmq
+      RabbitMQ__Port: 5672
+      RabbitMQ__User: ${RABBITMQ_DEFAULT_USER}
+      RabbitMQ__Password: ${RABBITMQ_DEFAULT_PASS}
+      RabbitMQ__Exchange: nexus.telemetry
     depends_on:
       postgres:
         condition: service_healthy
@@ -80,6 +85,48 @@
       - "traefik.http.routers.nexus-auth.priority=100"
       - "traefik.http.services.nexus-auth.loadbalancer.server.port=3000"
 
+  rabbitmq:
+    image: rabbitmq:4-management
+    container_name: nexus-rabbitmq
+    hostname: rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS}
+    volumes:
+      - nexus-rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      - nexus-app-network
+
+  telemetry-worker:
+    build:
+      context: .
+      dockerfile: src/TelemetryWorker/Dockerfile
+    container_name: nexus-telemetry-worker
+    environment:
+      DOTNET_ENVIRONMENT: Development
+      ConnectionStrings__NexusDatabase: Host=postgres;Port=5432;Database=nexus;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+      RabbitMQ__Host: rabbitmq
+      RabbitMQ__Port: 5672
+      RabbitMQ__User: ${RABBITMQ_DEFAULT_USER}
+      RabbitMQ__Password: ${RABBITMQ_DEFAULT_PASS}
+      RabbitMQ__Exchange: nexus.telemetry
+      RabbitMQ__InfrastructureQueue: nexus.telemetry.infrastructure
+      RabbitMQ__SensorQueue: nexus.telemetry.sensor
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - nexus-app-network
+      - nexus-db-network
+
   traefik:
     image: traefik:v3.6.1
     container_name: nexus-traefik
@@ -109,3 +156,5 @@ networks:
 volumes:
   nexus-postgres-data:
     external: true
+  nexus-rabbitmq-data:
+    name: nexus-rabbitmq-data

@@ -1,4 +1,3 @@
-
 BEGIN;
 
 -- Add a version number to each user account.
