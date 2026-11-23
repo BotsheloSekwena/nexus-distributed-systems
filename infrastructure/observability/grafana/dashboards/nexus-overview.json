@@ -1,0 +1,125 @@
+{
+  "uid": "nexus-overview",
+  "title": "NEXUS — Infrastructure Overview",
+  "tags": ["nexus", "infrastructure", "observability"],
+  "timezone": "browser",
+  "schemaVersion": 41,
+  "version": 1,
+  "refresh": "15s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Monitoring Targets",
+      "type": "stat",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"x": 0, "y": 0, "w": 6, "h": 4},
+      "targets": [{"expr": "sum(up)", "legendFormat": "Healthy targets", "refId": "A"}]
+    },
+    {
+      "id": 2,
+      "title": "PostgreSQL Database Size",
+      "type": "stat",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"x": 6, "y": 0, "w": 6, "h": 4},
+      "targets": [{"expr": "sum(pg_database_size_bytes)", "legendFormat": "Database size", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "bytes"}, "overrides": []}
+    },
+    {
+      "id": 3,
+      "title": "RabbitMQ Ready Messages",
+      "type": "stat",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"x": 12, "y": 0, "w": 6, "h": 4},
+      "targets": [{"expr": "sum(rabbitmq_queue_messages_ready)", "legendFormat": "Ready", "refId": "A"}]
+    },
+    {
+      "id": 4,
+      "title": ".NET Working Set Memory",
+      "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"x": 0, "y": 4, "w": 12, "h": 8},
+      "targets": [{"expr": "dotnet_process_memory_working_set_bytes", "legendFormat": "{{job}} / {{instance}}", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "bytes"}, "overrides": []}
+    },
+    {
+      "id": 5,
+      "title": ".NET CPU Usage",
+      "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"x": 12, "y": 4, "w": 12, "h": 8},
+      "targets": [{"expr": "rate(dotnet_process_cpu_time_seconds_total[5m])", "legendFormat": "{{job}} / {{instance}}", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "percentunit"}, "overrides": []}
+    },
+    {
+      "id": 6,
+      "title": "PostgreSQL Active Connections",
+      "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"x": 0, "y": 12, "w": 12, "h": 8},
+      "targets": [{"expr": "sum(pg_stat_activity_count)", "legendFormat": "Connections", "refId": "A"}]
+    },
+    {
+      "id": 7,
+      "title": "PostgreSQL Transaction Rate",
+      "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"x": 12, "y": 12, "w": 12, "h": 8},
+      "targets": [{"expr": "sum(rate(pg_stat_database_xact_commit[5m]))", "legendFormat": "Commits/sec", "refId": "A"}]
+    },
+    {
+      "id": 8,
+      "title": "RabbitMQ Queue Messages",
+      "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"x": 0, "y": 20, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "sum by (queue) (rabbitmq_queue_messages_ready)", "legendFormat": "{{queue}} ready", "refId": "A"},
+        {"expr": "sum by (queue) (rabbitmq_queue_messages_unacked)", "legendFormat": "{{queue}} unacknowledged", "refId": "B"}
+      ]
+    },
+    {
+      "id": 9,
+      "title": "RabbitMQ Consumers",
+      "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"x": 12, "y": 20, "w": 12, "h": 8},
+      "targets": [{"expr": "sum(rabbitmq_queue_consumers)", "legendFormat": "Consumers", "refId": "A"}]
+    },
+    {
+      "id": 10,
+      "title": "RabbitMQ Dead-Letter Rate",
+      "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"x": 0, "y": 28, "w": 12, "h": 8},
+      "targets": [{"expr": "rate(rabbitmq_global_messages_dead_lettered_confirmed_total[5m])", "legendFormat": "Dead-lettered/sec", "refId": "A"}]
+    },
+    {
+      "id": 11,
+      "title": "Traefik Open Connections",
+      "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"x": 12, "y": 28, "w": 12, "h": 8},
+      "targets": [{"expr": "sum by (entrypoint) (traefik_open_connections)", "legendFormat": "{{entrypoint}}", "refId": "A"}]
+    },
+    {
+      "id": 12,
+      "title": ".NET Exceptions",
+      "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"x": 0, "y": 36, "w": 12, "h": 8},
+      "targets": [{"expr": "sum(rate(dotnet_exceptions_total[5m]))", "legendFormat": "Exceptions/sec", "refId": "A"}]
+    },
+    {
+      "id": 13,
+      "title": "PostgreSQL Deadlocks",
+      "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"x": 12, "y": 36, "w": 12, "h": 8},
+      "targets": [{"expr": "sum(rate(pg_stat_database_deadlocks[5m]))", "legendFormat": "Deadlocks/sec", "refId": "A"}]
+    }
+  ]
+}

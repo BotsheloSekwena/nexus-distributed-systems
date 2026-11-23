@@ -2,14 +2,38 @@ using TelemetryWorker.Configuration;
 using Microsoft.EntityFrameworkCore;
 using TelemetryWorker.Data;
 using TelemetryWorker.Services;
+using OpenTelemetry;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
+using TelemetryWorker.Observability;
 
 var builder = Host.CreateApplicationBuilder(args);
 
+// Configure OpenTelemetry observability.
+builder.Services
+    .AddOpenTelemetry()
+    .ConfigureResource(resource =>
+        resource.AddService(serviceName: "nexus-telemetry-worker"))
+    .WithTracing(tracing =>
+    {
+        tracing
+            .AddSource(TelemetryWorkerInstrumentation.ActivitySourceName)
+            .AddHttpClientInstrumentation();
+    })
+    .WithMetrics(metrics =>
+    {
+        metrics
+            .AddMeter(TelemetryWorkerInstrumentation.MeterName)
+            .AddRuntimeInstrumentation();
+    })
+    .UseOtlpExporter();
+
+// Configure RabbitMQ options.
 builder.Services
     .AddOptions<RabbitMqOptions>()
     .Bind(builder.Configuration.GetSection(RabbitMqOptions.SectionName))
     .Validate(options =>
-        !string.IsNullOrWhiteSpace(options.Host) &&
         options.Port > 0 &&
         !string.IsNullOrWhiteSpace(options.User) &&
         !string.IsNullOrWhiteSpace(options.Password) &&
@@ -26,6 +50,7 @@ builder.Services
         "RabbitMQ configuration is incomplete.")
     .ValidateOnStart();
 
+// Configure PostgreSQL.
 var connectionString =
     builder.Configuration.GetConnectionString("NexusDatabase")
     ?? throw new InvalidOperationException(
@@ -34,9 +59,10 @@ var connectionString =
 builder.Services.AddDbContext<TelemetryDbContext>(options =>
     options.UseNpgsql(connectionString));
 
+// Register background services.
 builder.Services.AddHostedService<RabbitMqTopologyInitializer>();
-
 builder.Services.AddHostedService<TelemetryConsumer>();
 
 var host = builder.Build();
+
 host.Run();

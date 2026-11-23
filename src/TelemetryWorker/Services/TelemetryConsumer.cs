@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -12,6 +13,7 @@ using RabbitMQ.Client.Events;
 using TelemetryWorker.Configuration;
 using TelemetryWorker.Data;
 using TelemetryWorker.Models;
+using TelemetryWorker.Observability;
 
 namespace TelemetryWorker.Services;
 
@@ -104,10 +106,10 @@ public sealed class TelemetryConsumer : BackgroundService
 
             await Task.Delay(Timeout.Infinite, stoppingToken);
         }
-        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        catch (OperationCanceledException)
+            when (stoppingToken.IsCancellationRequested)
         {
-            _logger.LogInformation(
-                "Telemetry consumer is stopping.");
+            _logger.LogInformation("Telemetry consumer is stopping.");
         }
         finally
         {
@@ -123,12 +125,23 @@ public sealed class TelemetryConsumer : BackgroundService
     }
 
     /// <summary>
-    /// Processes a message and acknowledges it only after successful handling.
+    /// Processes a message and records its observability data.
     /// </summary>
     private async Task ProcessMessageAsync(
         BasicDeliverEventArgs eventArgs,
         CancellationToken cancellationToken)
     {
+        var startedAt = Stopwatch.GetTimestamp();
+        var category = "unknown";
+
+        using var activity =
+            TelemetryWorkerInstrumentation.ActivitySource.StartActivity(
+                "telemetry.process",
+                ActivityKind.Consumer);
+
+        activity?.SetTag("messaging.system", "rabbitmq");
+        activity?.SetTag("messaging.destination.name", eventArgs.RoutingKey);
+
         try
         {
             var telemetryEvent =
@@ -138,8 +151,15 @@ public sealed class TelemetryConsumer : BackgroundService
 
             ValidateTelemetryEvent(telemetryEvent);
 
-            await PersistTelemetryAsync(
-                telemetryEvent!,
+            category = telemetryEvent!.Category.ToString().ToLowerInvariant();
+
+            activity?.SetTag("nexus.telemetry.category", category);
+            activity?.SetTag(
+                "nexus.telemetry.schema_version",
+                telemetryEvent.SchemaVersion);
+
+            var persisted = await PersistTelemetryAsync(
+                telemetryEvent,
                 cancellationToken);
 
             await _consumerChannel!.BasicAckAsync(
@@ -147,13 +167,40 @@ public sealed class TelemetryConsumer : BackgroundService
                 multiple: false,
                 cancellationToken: cancellationToken);
 
+            if (persisted)
+            {
+                TelemetryWorkerInstrumentation.MessagesProcessed.Add(
+                    1,
+                    new KeyValuePair<string, object?>("category", category));
+            }
+            else
+            {
+                TelemetryWorkerInstrumentation.DuplicateMessages.Add(
+                    1,
+                    new KeyValuePair<string, object?>("category", category));
+            }
+
+            activity?.SetTag(
+                "nexus.telemetry.outcome",
+                persisted ? "processed" : "duplicate");
+
             _logger.LogInformation(
                 "Processed telemetry event {EventId} in category {Category}.",
-                telemetryEvent!.EventId,
+                telemetryEvent.EventId,
                 telemetryEvent.Category);
         }
         catch (Exception exception)
         {
+            TelemetryWorkerInstrumentation.MessagesFailed.Add(
+                1,
+                new KeyValuePair<string, object?>("category", category));
+
+            activity?.SetStatus(ActivityStatusCode.Error);
+
+            activity?.SetTag(
+                "nexus.telemetry.outcome",
+                "failed");
+
             _logger.LogError(
                 exception,
                 "Failed to process delivery {DeliveryTag}.",
@@ -188,6 +235,12 @@ public sealed class TelemetryConsumer : BackgroundService
                     requeue: true,
                     cancellationToken: cancellationToken);
             }
+        }
+        finally
+        {
+            TelemetryWorkerInstrumentation.ProcessingDuration.Record(
+                Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds,
+                new KeyValuePair<string, object?>("category", category));
         }
     }
 
@@ -288,6 +341,10 @@ public sealed class TelemetryConsumer : BackgroundService
             multiple: false,
             cancellationToken: cancellationToken);
 
+        TelemetryWorkerInstrumentation.MessagesRetried.Add(
+            1,
+            new KeyValuePair<string, object?>("routing_key", routingKey));
+
         _logger.LogWarning(
             "Telemetry message scheduled for retry {Attempt}/{Maximum}. Retry queue: {Queue}.",
             nextAttempt,
@@ -320,6 +377,8 @@ public sealed class TelemetryConsumer : BackgroundService
             eventArgs.DeliveryTag,
             multiple: false,
             cancellationToken: cancellationToken);
+
+        TelemetryWorkerInstrumentation.MessagesDeadLettered.Add(1);
 
         _logger.LogWarning(
             "Message {DeliveryTag} routed to the dead-letter queue. Reason: {Reason}",
@@ -374,11 +433,12 @@ public sealed class TelemetryConsumer : BackgroundService
         {
             byte number => number,
             short number => number,
-            int number => number,
+            int number when number >= 0 => number,
             long number when number <= int.MaxValue &&
                              number >= 0 => (int)number,
             byte[] bytes when int.TryParse(
-                Encoding.UTF8.GetString(bytes), out var parsed) => parsed,
+                Encoding.UTF8.GetString(bytes), out var parsed) &&
+                              parsed >= 0 => parsed,
             _ => 0
         };
     }
@@ -386,7 +446,7 @@ public sealed class TelemetryConsumer : BackgroundService
     /// <summary>
     /// Persists a telemetry event while preventing duplicate event records.
     /// </summary>
-    private async Task PersistTelemetryAsync(
+    private async Task<bool> PersistTelemetryAsync(
         TelemetryEvent telemetryEvent,
         CancellationToken cancellationToken)
     {
@@ -406,7 +466,7 @@ public sealed class TelemetryConsumer : BackgroundService
                 "Telemetry event {EventId} was already processed.",
                 telemetryEvent.EventId);
 
-            return;
+            return false;
         }
 
         var record = new TelemetryRecord
@@ -429,6 +489,7 @@ public sealed class TelemetryConsumer : BackgroundService
         try
         {
             await dbContext.SaveChangesAsync(cancellationToken);
+            return true;
         }
         catch (DbUpdateException exception)
             when (exception.InnerException is PostgresException
@@ -439,6 +500,8 @@ public sealed class TelemetryConsumer : BackgroundService
             _logger.LogInformation(
                 "Telemetry event {EventId} was concurrently persisted.",
                 telemetryEvent.EventId);
+
+            return false;
         }
     }
 

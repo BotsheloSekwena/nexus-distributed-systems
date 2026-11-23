@@ -10,6 +10,10 @@ using Api.Models;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
+using OpenTelemetry;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -34,6 +38,28 @@ if (!Uri.TryCreate(authValidationUrl, UriKind.Absolute, out var validationUri) |
 {
     throw new InvalidOperationException("Auth token validation configuration is incomplete.");
 }
+
+// Configure OpenTelemetry observability.
+builder.Services
+    .AddOpenTelemetry()
+    .ConfigureResource(resource =>
+        resource.AddService(serviceName: "nexus-api"))
+    .WithTracing(tracing =>
+    {
+        tracing
+            .AddAspNetCoreInstrumentation()
+            .AddHttpClientInstrumentation();
+    })
+    .WithMetrics(metrics =>
+    {
+        metrics
+            .AddMeter(
+                "Microsoft.AspNetCore.Hosting",
+                "Microsoft.AspNetCore.Server.Kestrel",
+                "System.Net.Http")
+            .AddRuntimeInstrumentation();
+    })
+    .UseOtlpExporter();
 
 // Register application services.
 builder.Services.AddOpenApi();
