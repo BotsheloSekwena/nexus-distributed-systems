@@ -8,6 +8,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using Npgsql;
+using OpenTelemetry.Context.Propagation;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
 using TelemetryWorker.Configuration;
@@ -134,10 +135,18 @@ public sealed class TelemetryConsumer : BackgroundService
         var startedAt = Stopwatch.GetTimestamp();
         var category = "unknown";
 
+        // Continue the publisher's trace when the message carries W3C trace
+        // context. Messages without it (e.g. older ones) start a new trace.
+        var parentContext = Propagators.DefaultTextMapPropagator.Extract(
+            default,
+            eventArgs.BasicProperties,
+            ReadTraceContextHeader);
+
         using var activity =
             TelemetryWorkerInstrumentation.ActivitySource.StartActivity(
                 "telemetry.process",
-                ActivityKind.Consumer);
+                ActivityKind.Consumer,
+                parentContext.ActivityContext);
 
         activity?.SetTag("messaging.system", "rabbitmq");
         activity?.SetTag("messaging.destination.name", eventArgs.RoutingKey);
@@ -412,6 +421,28 @@ public sealed class TelemetryConsumer : BackgroundService
             CorrelationId = eventArgs.BasicProperties.CorrelationId,
             ContentType = eventArgs.BasicProperties.ContentType,
             Headers = headers
+        };
+    }
+
+    /// <summary>
+    /// Reads a W3C trace context header. RabbitMQ delivers string header
+    /// values as UTF-8 byte arrays.
+    /// </summary>
+    private static IEnumerable<string> ReadTraceContextHeader(
+        IReadOnlyBasicProperties properties,
+        string key)
+    {
+        if (properties.Headers is null ||
+            !properties.Headers.TryGetValue(key, out var value))
+        {
+            return [];
+        }
+
+        return value switch
+        {
+            byte[] bytes => [Encoding.UTF8.GetString(bytes)],
+            string text => [text],
+            _ => []
         };
     }
 

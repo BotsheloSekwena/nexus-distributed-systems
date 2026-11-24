@@ -25,7 +25,7 @@
     container_name: nexus-api
     environment:
       ASPNETCORE_ENVIRONMENT: Development
-      ConnectionStrings__NexusDatabase: Host=postgres;Port=5432;Database=nexus;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+      ConnectionStrings__NexusDatabase: Host=postgres;Port=5432;Database=nexus;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD};GSS Encryption Mode=Disable
       Jwt__Secret: ${JWT_SECRET}
       Jwt__Issuer: ${JWT_ISSUER}
       Jwt__Audience: ${JWT_AUDIENCE}
@@ -114,7 +114,7 @@
     container_name: nexus-telemetry-worker
     environment:
       DOTNET_ENVIRONMENT: Development
-      ConnectionStrings__NexusDatabase: Host=postgres;Port=5432;Database=nexus;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+      ConnectionStrings__NexusDatabase: Host=postgres;Port=5432;Database=nexus;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD};GSS Encryption Mode=Disable
       RabbitMQ__Host: rabbitmq
       RabbitMQ__Port: 5672
       RabbitMQ__User: ${RABBITMQ_DEFAULT_USER}

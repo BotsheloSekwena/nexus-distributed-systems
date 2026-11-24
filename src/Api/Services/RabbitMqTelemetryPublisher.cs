@@ -1,7 +1,10 @@
+using System.Diagnostics;
 using System.Text.Json;
 using Api.Configuration;
 using Contracts;
 using Microsoft.Extensions.Options;
+using OpenTelemetry;
+using OpenTelemetry.Context.Propagation;
 using RabbitMQ.Client;
 
 namespace Api.Services;
@@ -11,6 +14,11 @@ namespace Api.Services;
 /// </summary>
 public sealed class RabbitMqTelemetryPublisher : ITelemetryPublisher, IAsyncDisposable
 {
+    public const string ActivitySourceName = "Nexus.Api.Messaging";
+
+    private static readonly ActivitySource ActivitySource =
+        new(ActivitySourceName);
+
     private readonly RabbitMqOptions _options;
     private readonly ILogger<RabbitMqTelemetryPublisher> _logger;
     private readonly SemaphoreSlim _lock = new(1, 1);
@@ -42,6 +50,19 @@ public sealed class RabbitMqTelemetryPublisher : ITelemetryPublisher, IAsyncDisp
 
         await _lock.WaitAsync(cancellationToken);
 
+        var routingKey = telemetryEvent.Category.ToString().ToLowerInvariant();
+
+        // Producer span: the hand-off point between the HTTP request and RabbitMQ.
+        using var activity = ActivitySource.StartActivity(
+            $"{_options.Exchange} publish",
+            ActivityKind.Producer);
+
+        activity?.SetTag("messaging.system", "rabbitmq");
+        activity?.SetTag("messaging.operation.type", "send");
+        activity?.SetTag("messaging.destination.name", _options.Exchange);
+        activity?.SetTag("messaging.rabbitmq.destination.routing_key", routingKey);
+        activity?.SetTag("messaging.message.id", telemetryEvent.EventId.ToString());
+
         try
         {
             await EnsureConnectedAsync(cancellationToken);
@@ -50,16 +71,28 @@ public sealed class RabbitMqTelemetryPublisher : ITelemetryPublisher, IAsyncDisp
                 telemetryEvent,
                 JsonOptions);
 
+            // Write the W3C trace context (traceparent/tracestate) into the
+            // message headers so the Telemetry Worker can continue this trace.
+            var headers = new Dictionary<string, object?>();
+
+            Propagators.DefaultTextMapPropagator.Inject(
+                new PropagationContext(
+                    activity?.Context ?? Activity.Current?.Context ?? default,
+                    Baggage.Current),
+                headers,
+                static (carrier, key, value) => carrier[key] = value);
+
             var properties = new BasicProperties
             {
                 ContentType = "application/json",
                 DeliveryMode = DeliveryModes.Persistent,
-                MessageId = telemetryEvent.EventId.ToString()
+                MessageId = telemetryEvent.EventId.ToString(),
+                Headers = headers
             };
 
             await _channel!.BasicPublishAsync(
                 exchange: _options.Exchange,
-                routingKey: telemetryEvent.Category.ToString().ToLowerInvariant(),
+                routingKey: routingKey,
                 mandatory: true,
                 basicProperties: properties,
                 body: body,
@@ -72,6 +105,8 @@ public sealed class RabbitMqTelemetryPublisher : ITelemetryPublisher, IAsyncDisp
         }
         catch (Exception exception)
         {
+            activity?.SetStatus(ActivityStatusCode.Error, exception.Message);
+
             _logger.LogError(
                 exception,
                 "Failed to publish telemetry event {EventId}",

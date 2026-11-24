@@ -68,7 +68,7 @@ Before production deployment, additional work is required around:
 
 - HTTPS and certificate management
 - Secrets rotation
-- Centralized logging and monitoring
+- Alerting, on-call notification and long-term telemetry storage
 - Backup and recovery procedures
 - Database access permissions
 - Distributed rate limiting
@@ -116,11 +116,15 @@ Phase 7 messaging functionality was verified through manual integration testing 
 
 ## 14. Observability and Messaging Monitoring
 
-The Telemetry Worker currently provides application logs and RabbitMQ exposes queue information through its management tooling.
+Phase 8 introduced centralised metrics (Prometheus), distributed tracing (Tempo), log aggregation (Loki) and a provisioned Grafana dashboard. These were verified at runtime.
 
-**Impact:** Centralized metrics, distributed tracing, alerting and a dedicated operational monitoring dashboard have not yet been implemented.
+**Remaining gaps:**
 
-**Future improvement:** Introduce OpenTelemetry instrumentation, Prometheus metrics, Grafana dashboards and centralized log aggregation as part of the planned observability phase.
+- No alerting rules or notification channels are configured. Failures are visible on the dashboard but are not actively reported.
+- Grafana data sources are not configured for direct navigation between a trace and its related logs.
+- Observability data is stored on local Docker volumes with fixed retention (Prometheus 15 days; Loki and Tempo 168 hours) and no backup.
+
+**Future improvement:** Add Prometheus or Grafana alert rules for dead-lettering, consumer absence and scrape failures. Configure trace-to-logs correlation. Define a storage and retention strategy appropriate to the deployment.
 
 ## 15. Retry Configuration and Recovery
 
@@ -130,7 +134,47 @@ The current messaging implementation uses a configurable retry delay and maximum
 
 **Future improvement:** Consider exponential backoff, operational alerting and controlled automated recovery procedures where appropriate.
 
-## 16. Review Status
+## 16. Auth Service Database Resilience
+
+The Auth Service uses a single long-lived `pg.Client` (`src/Auth/db.js`) with no `error` handler or reconnection. No Docker Compose service defines a restart policy.
+
+**Impact:** Identified during Phase 8 failure testing. When PostgreSQL restarted, the Auth Service process terminated on an unhandled connection error (`57P01`) and remained stopped. All protected API requests then failed with HTTP 503 until Auth was started manually. Even with an error handler, the single connection would not recover on its own.
+
+**Future improvement:** Replace the single client with a `pg.Pool`, handle pool errors, and define restart policies (for example `restart: unless-stopped`) for long-running services.
+
+## 17. Auth Service Log Export
+
+The Auth Service exports traces and metrics through OpenTelemetry, but its logs are written with `console` and are not exported.
+
+**Impact:** Auth Service logs are available only through `docker compose logs` and are absent from Loki.
+
+**Future improvement:** Adopt a structured logging library with an OpenTelemetry log bridge (for example Pino or Winston) and configure an OTLP log exporter.
+
+## 18. Custom Metric Presentation
+
+Several characteristics of the Telemetry Worker metrics affect how they are presented:
+
+- Counters are created only on their first measurement, already holding the value 1. Prometheus' `increase()` cannot observe this first increment, so the "Telemetry Messages Processed" panel undercounts by one after each worker restart.
+- Failure-handling panels show totals since the worker started, which reset when the worker restarts.
+- Labels are inconsistent: `processed`, `failed` and `duplicates` use `category`, `retried` uses `routing_key`, and `dead_lettered` has no label.
+- The processing-duration histogram uses the SDK's default bucket boundaries (for example 100 ms to 250 ms), so the p95 is an interpolated estimate and is noisy at low volume.
+- The Auth Service sets `service.namespace`, so its metrics appear as `exported_job="nexus/nexus-auth"`, while the .NET services have no namespace prefix.
+
+**Future improvement:** Initialise counters for known label sets at start-up, standardise labels, configure explicit histogram buckets for expected latencies, and use consistent service naming.
+
+## 19. Telemetry Worker Health Check
+
+The Telemetry Worker has no Docker health check. Its state is visible through logs, RabbitMQ consumer counts and the dashboard, but not through `docker compose ps`.
+
+**Future improvement:** Add a health check reflecting broker connectivity and consumer state.
+
+## 20. Dashboard Provisioning on Docker Desktop
+
+Grafana reloads provisioned dashboards from a bind-mounted directory. On Docker Desktop for Windows, changes made from the host were not picked up automatically during Phase 8.
+
+**Impact:** Dashboard changes require `docker compose restart grafana` to take effect in this environment.
+
+## 21. Review Status
 
 These limitations are documented for transparency and should be reviewed as the NEXUS architecture evolves.
 

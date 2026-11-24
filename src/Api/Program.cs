@@ -47,6 +47,7 @@ builder.Services
     .WithTracing(tracing =>
     {
         tracing
+            .AddSource(RabbitMqTelemetryPublisher.ActivitySourceName)
             .AddAspNetCoreInstrumentation()
             .AddHttpClientInstrumentation();
     })
